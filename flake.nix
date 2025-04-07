@@ -21,7 +21,7 @@
           name = "linaro-toolchain-9.2-2019.12";
           src = pkgs.fetchurl {
             url = "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-a/9.2-2019.12/binrel/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz";
-            sha256 = "0wsmj3j8g7vxy5zmw0r0l8g2r6fsl4n0d2g70nwhb99g83z49wyk"; # Computed with nix-prefetch-url
+            sha256 = "0rkaw1v66l9bpvp3i2flhnm1dik86c53rkskkkxh9ggh64anizld"; # Computed with nix-prefetch-url
           };
           nativeBuildInputs = [ pkgs.xz ];
           installPhase = ''
