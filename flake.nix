@@ -2,13 +2,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
-    linux-compulab = {
-      url = "github:compulab-yokneam/linux-compulab/linux-compulab_v6.6.23";
-      flake = false;
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, linux-compulab }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -16,138 +12,81 @@
           config.allowUnfree = true;
         };
 
-        # Linaro toolchain derivation
-        linaro-toolchain-raw = pkgs.stdenv.mkDerivation {
-          name = "linaro-toolchain-raw-9.2-2019.12";
-          src = pkgs.fetchurl {
-            url = "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-a/9.2-2019.12/binrel/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz";
-            sha256 = "0rkaw1v66l9bpvp3i2flhnm1dik86c53rkskkkxh9ggh64anizld";
-          };
-          nativeBuildInputs = [ pkgs.xz ];
-          installPhase = ''
-            mkdir -p $out
-            tar -xf $src -C $out --strip-components=1
-          '';
-          dontFixup = true;
-        };
-
-        # Wrap the toolchain in an FHS environment
-        linaro-toolchain = pkgs.buildFHSEnv {
-          name = "linaro-toolchain";
-          targetPkgs = pkgs: [
-            linaro-toolchain-raw
-            pkgs.zlib # Required by gcc
-            pkgs.glibc # Provides libc.so
-            pkgs.gcc # Native gcc for HOSTCC
-          ];
-          multiPkgs = pkgs: [];
-          runScript = "bash";
-          extraOutputsToInstall = [ "out" ];
-        };
-
-        # Kernel build script
-        buildKernelScript = pkgs.writeShellScriptBin "build-imx8plus-kernel" ''
-          set -e  # Exit on any error
-
-          # Set MACHINE outside the FHS command
-          MACHINE="''${1:-ucm-imx8m-plus}"
-
-          # Define the compiler path directly
-          COMPILER=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-gcc
-
-          # Run the build inside the FHS environment
-          ${linaro-toolchain}/bin/linaro-toolchain -c "
-            export ARCH=arm64
-            export CROSS_COMPILE=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-
-            export HOSTCC=/usr/bin/gcc  # Use native gcc for host tools
-
-            # Verify the cross-compiler works
-            if ! $COMPILER --version > /dev/null 2>&1; then
-              echo 'Error: Cross-compiler not working inside FHS environment.'
-              exit 1
-            fi
-
-            # Verify the host compiler works
-            if ! \$HOSTCC --version > /dev/null 2>&1; then
-              echo 'Error: Host compiler not working inside FHS environment.'
-              exit 1
-            fi
-
-            # Use the linux-compulab source from the flake input
-            SRC_DIR=${linux-compulab}
-            BUILD_DIR=$(pwd)/linux-compulab-build
-
-            # Copy the source to a writable directory
-            if [ ! -d \$BUILD_DIR ]; then
-              echo 'Copying kernel source to \$BUILD_DIR...'
-              cp -r \$SRC_DIR \$BUILD_DIR
-              chmod -R u+w \$BUILD_DIR
-            fi
-
-            cd \$BUILD_DIR
-
-            # Use the MACHINE variable
-            export MACHINE=\$MACHINE
-
-            # Apply default config
-            echo 'Applying default configuration for \$MACHINE...'
-            make compulab_v8_defconfig compulab.config
-
-            # Optional: Run menuconfig if requested
-            if [ -n '\$2' ] && [ '\$2' = 'menuconfig' ]; then
-              make menuconfig
-            fi
-
-            # Build the kernel
-            echo 'Building kernel with $(nproc) jobs...'
-            nice make -j$(nproc)
-
-            echo 'Kernel build completed. Output is in \$BUILD_DIR/arch/arm64/boot/'
-          "
+        # Dockerfile for the kernel build environment
+        dockerfile = pkgs.writeText "Dockerfile" ''
+          FROM ubuntu:20.04
+          ENV DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y \
+            build-essential \
+            git \
+            wget \
+            xz-utils \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libncurses5-dev \
+            && rm -rf /var/lib/apt/lists/*
+          # Install Linaro toolchain
+          RUN wget -q https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-a/9.2-2019.12/binrel/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz -O /tmp/linaro.tar.xz \
+            && tar -xf /tmp/linaro.tar.xz -C /opt \
+            && rm /tmp/linaro.tar.xz
+          ENV ARCH=arm64
+          ENV CROSS_COMPILE=/opt/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+          # Clone the kernel source
+          RUN git clone -b linux-compulab_v6.6.23 https://github.com/compulab-yokneam/linux-compulab.git /linux-compulab
+          WORKDIR /linux-compulab
+          CMD ["/bin/bash"]
         '';
 
-        # Development shell with FHS-wrapped toolchain
-        devShell = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            git
-            gnumake
-            ncurses # for menuconfig
-            flex
-            bison
-            bc
-            openssl
-            binutils
-            (buildFHSEnv {
-              name = "linaro-toolchain-shell";
-              targetPkgs = pkgs: [
-                linaro-toolchain-raw
-                pkgs.zlib
-                pkgs.glibc
-                pkgs.gcc # Native gcc for testing
-              ];
-              multiPkgs = pkgs: [];
-              runScript = "bash";
-            })
-            buildKernelScript
-          ];
+        # Script to build the Docker image
+        buildImageScript = pkgs.writeShellScriptBin "build-imx8plus-image" ''
+          cp ${dockerfile} ./Dockerfile
+          ${pkgs.docker}/bin/docker build -t imx8plus-kernel-builder:latest -f ./Dockerfile .
+          rm -f ./Dockerfile
+        '';
 
-          shellHook = ''
-            echo "iMX8M Plus Kernel Build Environment Ready"
-            echo "Supported machines: ucm-imx8m-plus, ucm-imx8m-plus-sbev, mcm-imx8m-plus, iot-gate-imx8plus"
+        # Script to build the kernel interactively
+        buildKernelScript = pkgs.writeShellScriptBin "build-imx8plus-kernel" ''
+          if [ $# -lt 1 ]; then
             echo "Usage: build-imx8plus-kernel <machine> [menuconfig]"
-            echo "Example: build-imx8plus-kernel ucm-imx8m-plus-sbev"
-            echo "Example with menuconfig: build-imx8plus-kernel ucm-imx8m-plus-sbev menuconfig"
-            echo "To test the compiler: linaro-toolchain-shell -c '${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-gcc --version'"
-            export PS1='\[\e[32m\][Nix Shell: imx8plus-kernel]\[\e[0m\] \u@\h:\w\$ '
-          '';
-        };
+            echo "Supported machines: ucm-imx8m-plus, ucm-imx8m-plus-sbev, mcm-imx8m-plus, iot-gate-imx8plus"
+            exit 1
+          fi
+          MACHINE=$1
+          ${buildImageScript}/bin/build-imx8plus-image
+          ${pkgs.docker}/bin/docker run -it --rm \
+            -v $(pwd)/output:/output \
+            imx8plus-kernel-builder:latest \
+            /bin/bash -c "\
+              export MACHINE=$MACHINE && \
+              make compulab_v8_defconfig compulab.config && \
+              [ \"\$1\" = 'menuconfig' ] && make menuconfig || true && \
+              make -j$(nproc) && \
+              cp arch/arm64/boot/Image /output/ && \
+              cp arch/arm64/boot/dts/freescale/*.dtb /output/ || true \
+            "
+          echo "Kernel build completed. Output is in $(pwd)/output/"
+        '';
+
       in
       {
         packages = {
+          buildImage = buildImageScript;
           buildKernel = buildKernelScript;
         };
 
-        devShells.default = devShell;
+        devShells.default = pkgs.mkShell {
+          buildInputs = with pkgs; [ docker buildImageScript buildKernelScript ];
+          shellHook = ''
+            echo "iMX8M Plus Kernel Build Environment (Docker) Ready"
+            echo "Run 'build-imx8plus-image' to build the Docker image."
+            echo "Run 'build-imx8plus-kernel <machine> [menuconfig]' to build the kernel."
+            echo "Supported machines: ucm-imx8m-plus, ucm-imx8m-plus-sbev, mcm-imx8m-plus, iot-gate-imx8plus"
+            echo "Example: build-imx8plus-kernel ucm-imx8m-plus-sbev"
+            export PS1='\[\e[32m\][Nix Shell: imx8plus-docker]\[\e[0m\] \u@\h:\w\$ '
+          '';
+        };
       }
     );
 }
