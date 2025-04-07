@@ -48,16 +48,13 @@
         buildKernelScript = pkgs.writeShellScriptBin "build-imx8plus-kernel" ''
           set -e  # Exit on any error
 
-          # Use the FHS-wrapped toolchain
-          CROSS_COMPILE=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-
-
-          # Set MACHINE outside the FHS command to avoid quoting issues
+          # Set MACHINE outside the FHS command
           MACHINE="''${1:-ucm-imx8m-plus}"
 
           # Run the build inside the FHS environment
           ${linaro-toolchain}/bin/linaro-toolchain -c "
             export ARCH=arm64
-            export CROSS_COMPILE=$CROSS_COMPILE
+            export CROSS_COMPILE=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-
 
             # Verify the compiler works
             if ! \${CROSS_COMPILE}gcc --version > /dev/null 2>&1; then
