@@ -1,7 +1,7 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
-    flake-utils.url = "github:num?tide/flake-utils";
+    flake-utils.url = "github:numtide/flake-utils";
     linux-compulab = {
       url = "github:compulab-yokneam/linux-compulab/linux-compulab_v6.6.23";
       flake = false;
@@ -38,6 +38,7 @@
             linaro-toolchain-raw
             pkgs.zlib # Required by gcc
             pkgs.glibc # Provides libc.so
+            pkgs.gcc # Native gcc for HOSTCC
           ];
           multiPkgs = pkgs: [];
           runScript = "bash";
@@ -58,10 +59,17 @@
           ${linaro-toolchain}/bin/linaro-toolchain -c "
             export ARCH=arm64
             export CROSS_COMPILE=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-
+            export HOSTCC=/usr/bin/gcc  # Use native gcc for host tools
 
-            # Verify the compiler works
+            # Verify the cross-compiler works
             if ! $COMPILER --version > /dev/null 2>&1; then
               echo 'Error: Cross-compiler not working inside FHS environment.'
+              exit 1
+            fi
+
+            # Verify the host compiler works
+            if ! \$HOSTCC --version > /dev/null 2>&1; then
+              echo 'Error: Host compiler not working inside FHS environment.'
               exit 1
             fi
 
@@ -79,14 +87,14 @@
             cd \$BUILD_DIR
 
             # Use the MACHINE variable
-            export MACHINE=$MACHINE
+            export MACHINE=\$MACHINE
 
             # Apply default config
             echo 'Applying default configuration for \$MACHINE...'
             make compulab_v8_defconfig compulab.config
 
             # Optional: Run menuconfig if requested
-            if [ \$2 = 'menuconfig' ]; then
+            if [ -n '\$2' ] && [ '\$2' = 'menuconfig' ]; then
               make menuconfig
             fi
 
@@ -115,6 +123,7 @@
                 linaro-toolchain-raw
                 pkgs.zlib
                 pkgs.glibc
+                pkgs.gcc # Native gcc for testing
               ];
               multiPkgs = pkgs: [];
               runScript = "bash";
