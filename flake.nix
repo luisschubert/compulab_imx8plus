@@ -51,6 +51,9 @@
           # Use the FHS-wrapped toolchain
           CROSS_COMPILE=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-
 
+          # Set MACHINE outside the FHS command to avoid quoting issues
+          MACHINE="''${1:-ucm-imx8m-plus}"
+
           # Run the build inside the FHS environment
           ${linaro-toolchain}/bin/linaro-toolchain -c "
             export ARCH=arm64
@@ -75,9 +78,8 @@
 
             cd \$BUILD_DIR
 
-            # Set MACHINE if provided, default to ucm-imx8m-plus
-            MACHINE=\${1:-ucm-imx8m-plus}
-            export MACHINE
+            # Use the MACHINE variable
+            export MACHINE=$MACHINE
 
             # Apply default config
             echo 'Applying default configuration for \$MACHINE...'
