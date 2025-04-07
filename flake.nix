@@ -17,11 +17,11 @@
         };
 
         # Linaro toolchain derivation
-        linaro-toolchain = pkgs.stdenv.mkDerivation {
-          name = "linaro-toolchain-9.2-2019.12";
+        linaro-toolchain-raw = pkgs.stdenv.mkDerivation {
+          name = "linaro-toolchain-raw-9.2-2019.12";
           src = pkgs.fetchurl {
             url = "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-a/9.2-2019.12/binrel/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz";
-            sha256 = "0rkaw1v66l9bpvp3i2flhnm1dik86c53rkskkkxh9ggh64anizld"; # Computed with nix-prefetch-url
+            sha256 = "0rkaw1v66l9bpvp3i2flhnm1dik86c53rkskkkxh9ggh64anizld";
           };
           nativeBuildInputs = [ pkgs.xz ];
           installPhase = ''
@@ -31,54 +31,72 @@
           dontFixup = true;
         };
 
+        # Wrap the toolchain in an FHS environment
+        linaro-toolchain = pkgs.buildFHSEnv {
+          name = "linaro-toolchain";
+          targetPkgs = pkgs: [
+            linaro-toolchain-raw
+            pkgs.zlib # Required by gcc
+            pkgs.glibc # Provides libc.so
+          ];
+          multiPkgs = pkgs: [];
+          runScript = "bash";
+          extraOutputsToInstall = [ "out" ];
+        };
+
         # Kernel build script
         buildKernelScript = pkgs.writeShellScriptBin "build-imx8plus-kernel" ''
           set -e  # Exit on any error
 
-          # Set environment variables
-          export ARCH=arm64
-          export CROSS_COMPILE=${linaro-toolchain}/bin/aarch64-none-linux-gnu-
+          # Use the FHS-wrapped toolchain
+          CROSS_COMPILE=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-
 
-          # Verify the compiler works
-          if ! $CROSS_COMPILE"gcc" --version > /dev/null 2>&1; then
-            echo "Error: Cross-compiler not working. Check the Linaro toolchain setup."
-            exit 1
-          fi
+          # Run the build inside the FHS environment
+          ${linaro-toolchain}/bin/linaro-toolchain -c "
+            export ARCH=arm64
+            export CROSS_COMPILE=$CROSS_COMPILE
 
-          # Use the linux-compulab source from the flake input
-          SRC_DIR=${linux-compulab}
-          BUILD_DIR=$(pwd)/linux-compulab-build
+            # Verify the compiler works
+            if ! \${CROSS_COMPILE}gcc --version > /dev/null 2>&1; then
+              echo 'Error: Cross-compiler not working inside FHS environment.'
+              exit 1
+            fi
 
-          # Copy the source to a writable directory
-          if [ ! -d "$BUILD_DIR" ]; then
-            echo "Copying kernel source to $BUILD_DIR..."
-            cp -r $SRC_DIR $BUILD_DIR
-            chmod -R u+w $BUILD_DIR
-          fi
+            # Use the linux-compulab source from the flake input
+            SRC_DIR=${linux-compulab}
+            BUILD_DIR=$(pwd)/linux-compulab-build
 
-          cd $BUILD_DIR
+            # Copy the source to a writable directory
+            if [ ! -d \"\$BUILD_DIR\" ]; then
+              echo 'Copying kernel source to \$BUILD_DIR...'
+              cp -r \$SRC_DIR \$BUILD_DIR
+              chmod -R u+w \$BUILD_DIR
+            fi
 
-          # Set MACHINE if provided, default to ucm-imx8m-plus
-          MACHINE=''${1:-ucm-imx8m-plus}
-          export MACHINE
+            cd \$BUILD_DIR
 
-          # Apply default config
-          echo "Applying default configuration for $MACHINE..."
-          make compulab_v8_defconfig compulab.config
+            # Set MACHINE if provided, default to ucm-imx8m-plus
+            MACHINE=\${1:-ucm-imx8m-plus}
+            export MACHINE
 
-          # Optional: Run menuconfig if requested
-          if [ "$2" = "menuconfig" ]; then
-            make menuconfig
-          fi
+            # Apply default config
+            echo 'Applying default configuration for \$MACHINE...'
+            make compulab_v8_defconfig compulab.config
 
-          # Build the kernel
-          echo "Building kernel with $(nproc) jobs..."
-          nice make -j$(nproc)
+            # Optional: Run menuconfig if requested
+            if [ \"\$2\" = 'menuconfig' ]; then
+              make menuconfig
+            fi
 
-          echo "Kernel build completed. Output is in $BUILD_DIR/arch/arm64/boot/"
+            # Build the kernel
+            echo 'Building kernel with $(nproc) jobs...'
+            nice make -j$(nproc)
+
+            echo 'Kernel build completed. Output is in \$BUILD_DIR/arch/arm64/boot/'
+          "
         '';
 
-        # Development shell
+        # Development shell with FHS-wrapped toolchain
         devShell = pkgs.mkShell {
           buildInputs = with pkgs; [
             git
@@ -88,9 +106,17 @@
             bison
             bc
             openssl
-            # Add binutils for cross-compilation support
             binutils
-            linaro-toolchain
+            (buildFHSEnv {
+              name = "linaro-toolchain-shell";
+              targetPkgs = pkgs: [
+                linaro-toolchain-raw
+                pkgs.zlib
+                pkgs.glibc
+              ];
+              multiPkgs = pkgs: [];
+              runScript = "bash";
+            })
             buildKernelScript
           ];
 
@@ -100,7 +126,7 @@
             echo "Usage: build-imx8plus-kernel <machine> [menuconfig]"
             echo "Example: build-imx8plus-kernel ucm-imx8m-plus-sbev"
             echo "Example with menuconfig: build-imx8plus-kernel ucm-imx8m-plus-sbev menuconfig"
-            echo "To test the compiler: ${linaro-toolchain}/bin/aarch64-none-linux-gnu-gcc --version"
+            echo "To test the compiler: linaro-toolchain-shell -c '${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-gcc --version'"
             export PS1='\[\e[32m\][Nix Shell: imx8plus-kernel]\[\e[0m\] \u@\h:\w\$ '
           '';
         };
