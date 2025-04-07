@@ -1,7 +1,7 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
-    flake-utils.url = "github:numtide/flake-utils";
+    flake-utils.url = "github:num?tide/flake-utils";
     linux-compulab = {
       url = "github:compulab-yokneam/linux-compulab/linux-compulab_v6.6.23";
       flake = false;
@@ -51,13 +51,16 @@
           # Set MACHINE outside the FHS command
           MACHINE="''${1:-ucm-imx8m-plus}"
 
+          # Define the compiler path directly
+          COMPILER=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-gcc
+
           # Run the build inside the FHS environment
           ${linaro-toolchain}/bin/linaro-toolchain -c "
             export ARCH=arm64
             export CROSS_COMPILE=${linaro-toolchain-raw}/bin/aarch64-none-linux-gnu-
 
             # Verify the compiler works
-            if ! \${CROSS_COMPILE}gcc --version > /dev/null 2>&1; then
+            if ! $COMPILER --version > /dev/null 2>&1; then
               echo 'Error: Cross-compiler not working inside FHS environment.'
               exit 1
             fi
@@ -67,7 +70,7 @@
             BUILD_DIR=$(pwd)/linux-compulab-build
 
             # Copy the source to a writable directory
-            if [ ! -d \"\$BUILD_DIR\" ]; then
+            if [ ! -d \$BUILD_DIR ]; then
               echo 'Copying kernel source to \$BUILD_DIR...'
               cp -r \$SRC_DIR \$BUILD_DIR
               chmod -R u+w \$BUILD_DIR
@@ -83,7 +86,7 @@
             make compulab_v8_defconfig compulab.config
 
             # Optional: Run menuconfig if requested
-            if [ \"\$2\" = 'menuconfig' ]; then
+            if [ \$2 = 'menuconfig' ]; then
               make menuconfig
             fi
 
