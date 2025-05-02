@@ -64,6 +64,7 @@
               [ \"\$1\" = 'menuconfig' ] && make menuconfig || true && \
               make -j$(nproc) tarbz2-pkg && \
               ls arch/arm64/boot/ && \
+              ls && \
               cp arch/arm64/boot/Image /output/ && \
               cp arch/arm64/boot/dts/freescale/*.dtb /output/ || true \
             "
