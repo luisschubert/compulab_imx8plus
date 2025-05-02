@@ -62,7 +62,7 @@
               export MACHINE=$MACHINE && \
               make compulab_v8_defconfig compulab.config && \
               [ \"\$1\" = 'menuconfig' ] && make menuconfig || true && \
-              make -j$(nproc) && \
+              make -j$(nproc) tarbz2-pkg && \
               ls arch/arm64/boot/ && \
               cp arch/arm64/boot/Image /output/ && \
               cp arch/arm64/boot/dts/freescale/*.dtb /output/ || true \
