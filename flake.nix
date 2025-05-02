@@ -65,6 +65,7 @@
               make -j$(nproc) tarbz2-pkg && \
               ls arch/arm64/boot/ && \
               ls && \
+              cp *.tar.bz2 /output/ && \
               cp arch/arm64/boot/Image /output/ && \
               cp arch/arm64/boot/dts/freescale/*.dtb /output/ || true \
             "
